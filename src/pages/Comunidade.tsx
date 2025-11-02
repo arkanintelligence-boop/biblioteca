@@ -110,7 +110,18 @@ const Comunidade = () => {
   const toggleCurtida = async (postId: string, jaCurtiu: boolean) => {
     if (!user) return;
 
-    if (jaCurtiu) {
+    // Sempre verificar no banco de dados o estado real antes de fazer qualquer ação
+    const { data: existingCurtida } = await supabase
+      .from('curtidas')
+      .select('id')
+      .eq('usuario_id', user.id)
+      .eq('post_id', postId)
+      .maybeSingle();
+
+    const realmenteCurtiu = !!existingCurtida;
+
+    if (realmenteCurtiu) {
+      // Se existe, deletar
       const { error } = await supabase
         .from('curtidas')
         .delete()
@@ -121,14 +132,21 @@ const Comunidade = () => {
         console.error('Erro ao remover curtida:', error);
       }
     } else {
+      // Se não existe, inserir
       const { error } = await supabase
         .from('curtidas')
         .insert({ usuario_id: user.id, post_id: postId });
 
       // Ignorar erro 409/23505 (duplicata) - pode acontecer em race conditions
-      // ou quando o usuário clica muito rápido
-      if (error && error.code !== '23505' && !error.message?.includes('duplicate') && !error.message?.includes('409')) {
-        console.error('Erro ao adicionar curtida:', error);
+      // ou quando há curtidas órfãs no banco
+      if (error) {
+        // Se der erro de duplicata, significa que já existe no banco
+        // Recarregar posts para sincronizar o estado
+        if (error.code === '23505' || error.message?.includes('duplicate') || error.message?.includes('409')) {
+          // Silenciosamente recarregar - a curtida já existe
+        } else {
+          console.error('Erro ao adicionar curtida:', error);
+        }
       }
     }
     loadPosts();
