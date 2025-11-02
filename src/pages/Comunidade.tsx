@@ -111,15 +111,25 @@ const Comunidade = () => {
     if (!user) return;
 
     if (jaCurtiu) {
-      await supabase
+      const { error } = await supabase
         .from('curtidas')
         .delete()
         .eq('usuario_id', user.id)
         .eq('post_id', postId);
+      
+      if (error && error.code !== 'PGRST116') {
+        console.error('Erro ao remover curtida:', error);
+      }
     } else {
-      await supabase
+      const { error } = await supabase
         .from('curtidas')
         .insert({ usuario_id: user.id, post_id: postId });
+
+      // Ignorar erro 409/23505 (duplicata) - pode acontecer em race conditions
+      // ou quando o usuário clica muito rápido
+      if (error && error.code !== '23505' && !error.message?.includes('duplicate') && !error.message?.includes('409')) {
+        console.error('Erro ao adicionar curtida:', error);
+      }
     }
     loadPosts();
   };
