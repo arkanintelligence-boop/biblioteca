@@ -7,7 +7,7 @@ import { NewPostButton } from '@/components/NewPostButton';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase, PostComunidade, Comentario } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
-import { Heart, MessageCircle, Loader2 } from 'lucide-react';
+import { Heart, MessageCircle, Loader2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
@@ -164,12 +164,134 @@ const Comunidade = () => {
     }
   };
 
+  const deletarPost = async (postId: string) => {
+    if (!user) return;
+    
+    // Verificar se é admin
+    if (user.cargo?.toLowerCase() !== 'admin') {
+      toast({
+        title: 'Acesso negado',
+        description: 'Apenas administradores podem deletar posts.',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    if (!confirm('Tem certeza que deseja deletar este post? Esta ação não pode ser desfeita.')) {
+      return;
+    }
+
+    // Deletar curtidas relacionadas
+    await supabase
+      .from('curtidas')
+      .delete()
+      .eq('post_id', postId);
+
+    // Deletar comentários relacionados
+    await supabase
+      .from('comentarios')
+      .delete()
+      .eq('post_id', postId);
+
+    // Deletar o post
+    const { error } = await supabase
+      .from('posts_comunidade')
+      .delete()
+      .eq('id', postId);
+
+    if (error) {
+      toast({
+        title: 'Erro ao deletar post',
+        description: error.message,
+        variant: 'destructive'
+      });
+    } else {
+      toast({
+        title: 'Post deletado',
+        description: 'O post foi removido com sucesso.',
+      });
+      loadPosts();
+    }
+  };
+
+  const isAdmin = user?.cargo?.toLowerCase() === 'admin';
+
   const tempoAtras = (data: string) => {
     const segundos = Math.floor((new Date().getTime() - new Date(data).getTime()) / 1000);
     if (segundos < 60) return 'agora';
     if (segundos < 3600) return `${Math.floor(segundos / 60)}m`;
     if (segundos < 86400) return `${Math.floor(segundos / 3600)}h`;
     return `${Math.floor(segundos / 86400)}d`;
+  };
+
+  // Função para transformar links em texto em elementos clicáveis
+  const renderizarComLinks = (texto: string) => {
+    // Regex para detectar URLs (http, https, www, etc)
+    const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+|[^\s]+\.[a-z]{2,}(?:\/[^\s]*)?)/gi;
+    
+    const partes: Array<{ tipo: 'texto' | 'link'; conteudo: string }> = [];
+    let ultimoIndice = 0;
+    let match;
+    
+    // Criar uma nova regex para buscar todas as ocorrências
+    const regex = new RegExp(urlRegex.source, urlRegex.flags);
+    
+    while ((match = regex.exec(texto)) !== null) {
+      // Adicionar texto antes do link
+      if (match.index > ultimoIndice) {
+        partes.push({
+          tipo: 'texto',
+          conteudo: texto.substring(ultimoIndice, match.index)
+        });
+      }
+      
+      // Adicionar o link
+      partes.push({
+        tipo: 'link',
+        conteudo: match[0]
+      });
+      
+      ultimoIndice = regex.lastIndex;
+    }
+    
+    // Adicionar texto restante
+    if (ultimoIndice < texto.length) {
+      partes.push({
+        tipo: 'texto',
+        conteudo: texto.substring(ultimoIndice)
+      });
+    }
+    
+    // Se não encontrou nenhum link, retornar o texto original
+    if (partes.length === 0) {
+      return <>{texto}</>;
+    }
+    
+    return (
+      <>
+        {partes.map((parte, index) => {
+          if (parte.tipo === 'link') {
+            let url = parte.conteudo;
+            // Adicionar https:// se não tiver protocolo
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+              url = 'https://' + url;
+            }
+            return (
+              <a
+                key={index}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-purple-400 hover:text-purple-300 underline break-all"
+              >
+                {parte.conteudo}
+              </a>
+            );
+          }
+          return <span key={index}>{parte.conteudo}</span>;
+        })}
+      </>
+    );
   };
 
   if (loading) {
@@ -248,8 +370,8 @@ const Comunidade = () => {
                 <div className="mb-3">
                   <p className="text-foreground whitespace-pre-wrap break-words">
                     {expandedPosts[post.id] || post.conteudo.length <= 400
-                      ? post.conteudo
-                      : post.conteudo.slice(0, 400) + '...'}
+                      ? renderizarComLinks(post.conteudo)
+                      : renderizarComLinks(post.conteudo.slice(0, 400) + '...')}
                   </p>
                   {post.conteudo.length > 400 && (
                     <button
@@ -263,11 +385,14 @@ const Comunidade = () => {
 
                 {/* Imagem */}
                 {post.imagem_url && (
-                  <img
-                    src={post.imagem_url}
-                    alt="Post"
-                    className="w-full rounded-lg mb-3 max-h-96 object-cover max-w-full"
-                  />
+                  <div className="w-full rounded-lg mb-3 overflow-hidden flex justify-center bg-[#0A0A0A]">
+                    <img
+                      src={post.imagem_url}
+                      alt="Post"
+                      className="max-w-full h-auto rounded-lg object-contain max-h-[600px] sm:max-h-[700px] md:max-h-[800px]"
+                      style={{ maxHeight: '80vh' }}
+                    />
+                  </div>
                 )}
 
                 {/* Ações */}
@@ -288,6 +413,15 @@ const Comunidade = () => {
                     <MessageCircle className="w-5 h-5" />
                     <span>{post.total_comentarios || 0}</span>
                   </button>
+                  {isAdmin && (
+                    <button
+                      onClick={() => deletarPost(post.id)}
+                      className="flex items-center gap-2 hover:text-red-400 transition-colors ml-auto"
+                      title="Deletar post (Admin)"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  )}
                 </div>
 
                 {/* Comentários */}
@@ -310,8 +444,8 @@ const Comunidade = () => {
                             </p>
                             <p className="text-sm text-foreground whitespace-pre-wrap break-words">
                               {isCommentExpanded || !shouldTruncateComment
-                                ? comentario.conteudo
-                                : comentario.conteudo.slice(0, 200) + '...'}
+                                ? renderizarComLinks(comentario.conteudo)
+                                : renderizarComLinks(comentario.conteudo.slice(0, 200) + '...')}
                             </p>
                             {shouldTruncateComment && (
                               <button

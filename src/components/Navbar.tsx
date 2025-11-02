@@ -1,8 +1,8 @@
-import { LogOut, Home, Newspaper, Users, User } from 'lucide-react';
+import { LogOut, Home, Newspaper, Users, User, Bot } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { InstallPWAButton } from '@/components/InstallPWAButton';
+import { NotificationButton } from '@/components/NotificationButton';
 
 export const Navbar = () => {
   const { user, logout } = useAuth();
@@ -18,6 +18,7 @@ export const Navbar = () => {
     { icon: Home, label: 'Início', to: '/dashboard' },
     { icon: Newspaper, label: 'Feed Oculto', to: '/feed' },
     { icon: Users, label: 'Legião Oculta', to: '/comunidade' },
+    { icon: Bot, label: 'Robô Oculto', to: '/robo-oculto' },
     { icon: User, label: 'Perfil', to: '/perfil' },
   ];
 
@@ -68,8 +69,8 @@ export const Navbar = () => {
           {/* User Info (Direita) */}
           {user && (
             <div className="flex items-center gap-2">
-              {/* Botão de Instalação PWA */}
-              <InstallPWAButton />
+              {/* Botão de Notificações */}
+              <NotificationButton />
               
               <span className="text-sm text-gray-400 hidden md:block">
                 {user.email}

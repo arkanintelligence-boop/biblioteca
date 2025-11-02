@@ -12,6 +12,8 @@ import Module from "./pages/Module";
 import Feed from "./pages/Feed";
 import Comunidade from "./pages/Comunidade";
 import Perfil from "./pages/Perfil";
+import Notificacoes from "./pages/Notificacoes";
+import RoboOculto from "./pages/RoboOculto";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -31,6 +33,8 @@ const App = () => (
             <Route path="/feed" element={<Feed />} />
             <Route path="/comunidade" element={<Comunidade />} />
             <Route path="/perfil" element={<Perfil />} />
+            <Route path="/notificacoes" element={<Notificacoes />} />
+            <Route path="/robo-oculto" element={<RoboOculto />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
