@@ -186,7 +186,7 @@ const Comunidade = () => {
         <Navbar />
         <div className="w-full px-4 sm:px-6 lg:px-8 py-6">
           <div className="max-w-2xl mx-auto">
-            <h1 className="text-3xl font-bold text-white mb-6">👥 Comunidade</h1>
+            <h1 className="text-3xl font-bold text-white mb-6">👥 Legião Oculta</h1>
 
             {/* Criar Post */}
             <div className="bg-[#1A1A1A] rounded-lg p-4 sm:p-6 mb-6">

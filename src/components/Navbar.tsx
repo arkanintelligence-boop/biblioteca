@@ -17,7 +17,7 @@ export const Navbar = () => {
   const navItems = [
     { icon: Home, label: 'Início', to: '/dashboard' },
     { icon: Newspaper, label: 'Feed Oculto', to: '/feed' },
-    { icon: Users, label: 'Comunidade', to: '/comunidade' },
+    { icon: Users, label: 'Legião Oculta', to: '/comunidade' },
     { icon: User, label: 'Perfil', to: '/perfil' },
   ];
 
