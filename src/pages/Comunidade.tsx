@@ -11,6 +11,7 @@ import { Heart, MessageCircle, Loader2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 
 type PostComAutor = PostComunidade & {
   usuario: {
@@ -42,6 +43,10 @@ const Comunidade = () => {
   const [novoComentario, setNovoComentario] = useState<Record<string, string>>({});
   const [expandedPosts, setExpandedPosts] = useState<Record<string, boolean>>({});
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
+  const [dialogDeletar, setDialogDeletar] = useState<{ open: boolean; postId: string | null }>({
+    open: false,
+    postId: null,
+  });
 
   useEffect(() => {
     if (!user) {
@@ -92,7 +97,10 @@ const Comunidade = () => {
         variant: 'destructive'
       });
     } else {
-      toast({ title: 'Post criado!' });
+      toast({ 
+        title: 'Post criado!',
+        variant: 'success'
+      });
       setConteudo('');
       setImagemUrl(null);
       loadPosts();
@@ -164,7 +172,7 @@ const Comunidade = () => {
     }
   };
 
-  const deletarPost = async (postId: string) => {
+  const abrirDialogDeletar = (postId: string) => {
     if (!user) return;
     
     // Verificar se é admin
@@ -177,9 +185,13 @@ const Comunidade = () => {
       return;
     }
 
-    if (!confirm('Tem certeza que deseja deletar este post? Esta ação não pode ser desfeita.')) {
-      return;
-    }
+    setDialogDeletar({ open: true, postId });
+  };
+
+  const deletarPost = async () => {
+    if (!dialogDeletar.postId) return;
+
+    const postId = dialogDeletar.postId;
 
     // Deletar curtidas relacionadas
     await supabase
@@ -209,9 +221,12 @@ const Comunidade = () => {
       toast({
         title: 'Post deletado',
         description: 'O post foi removido com sucesso.',
+        variant: 'success',
       });
       loadPosts();
     }
+
+    setDialogDeletar({ open: false, postId: null });
   };
 
   const isAdmin = user?.cargo?.toLowerCase() === 'admin';
@@ -415,7 +430,7 @@ const Comunidade = () => {
                   </button>
                   {isAdmin && (
                     <button
-                      onClick={() => deletarPost(post.id)}
+                      onClick={() => abrirDialogDeletar(post.id)}
                       className="flex items-center gap-2 hover:text-red-400 transition-colors ml-auto"
                       title="Deletar post (Admin)"
                     >
@@ -498,6 +513,18 @@ const Comunidade = () => {
         </div>
         <NewPostButton />
         <BottomNav />
+        
+        {/* Dialog de Confirmação de Exclusão */}
+        <ConfirmDialog
+          open={dialogDeletar.open}
+          onOpenChange={(open) => setDialogDeletar({ open, postId: dialogDeletar.postId })}
+          onConfirm={deletarPost}
+          title="Deletar Post"
+          description="Tem certeza que deseja deletar este post? Esta ação não pode ser desfeita."
+          confirmText="Deletar"
+          cancelText="Cancelar"
+          variant="destructive"
+        />
       </div>
     </>
   );

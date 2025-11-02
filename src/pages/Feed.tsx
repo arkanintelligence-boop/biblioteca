@@ -8,6 +8,7 @@ import { supabase, PostFeed, Comentario } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { Heart, MessageCircle, Loader2, Trash2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 
 type PostComAutor = PostFeed & {
   usuario: {
@@ -36,6 +37,10 @@ const Feed = () => {
   const [comentarios, setComentarios] = useState<Record<string, ComentarioComAutor[]>>({});
   const [novoComentario, setNovoComentario] = useState<Record<string, string>>({});
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
+  const [dialogDeletar, setDialogDeletar] = useState<{ open: boolean; postId: string | null }>({
+    open: false,
+    postId: null,
+  });
 
   useEffect(() => {
     if (!user) {
@@ -134,7 +139,7 @@ const Feed = () => {
     }
   };
 
-  const deletarPost = async (postId: string) => {
+  const abrirDialogDeletar = (postId: string) => {
     if (!user) return;
     
     // Verificar se é admin
@@ -147,9 +152,13 @@ const Feed = () => {
       return;
     }
 
-    if (!confirm('Tem certeza que deseja deletar este post? Esta ação não pode ser desfeita.')) {
-      return;
-    }
+    setDialogDeletar({ open: true, postId });
+  };
+
+  const deletarPost = async () => {
+    if (!dialogDeletar.postId) return;
+
+    const postId = dialogDeletar.postId;
 
     // Deletar curtidas relacionadas
     await supabase
@@ -179,9 +188,12 @@ const Feed = () => {
       toast({
         title: 'Post deletado',
         description: 'O post foi removido com sucesso.',
+        variant: 'success',
       });
       loadPosts();
     }
+
+    setDialogDeletar({ open: false, postId: null });
   };
 
   const isAdmin = user?.cargo?.toLowerCase() === 'admin';
@@ -318,7 +330,7 @@ const Feed = () => {
                         </button>
                         {isAdmin && (
                           <button
-                            onClick={() => deletarPost(post.id)}
+                            onClick={() => abrirDialogDeletar(post.id)}
                             className="flex items-center gap-2 hover:text-red-400 transition-colors ml-auto"
                             title="Deletar post (Admin)"
                           >
@@ -404,6 +416,18 @@ const Feed = () => {
         </div>
         <NewPostButton onPostCreated={loadPosts} />
         <BottomNav />
+        
+        {/* Dialog de Confirmação de Exclusão */}
+        <ConfirmDialog
+          open={dialogDeletar.open}
+          onOpenChange={(open) => setDialogDeletar({ open, postId: dialogDeletar.postId })}
+          onConfirm={deletarPost}
+          title="Deletar Post"
+          description="Tem certeza que deseja deletar este post? Esta ação não pode ser desfeita."
+          confirmText="Deletar"
+          cancelText="Cancelar"
+          variant="destructive"
+        />
       </div>
     </>
   );

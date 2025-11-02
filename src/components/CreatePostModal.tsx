@@ -74,7 +74,7 @@ export const CreatePostModal = ({ open, onOpenChange, onPostCreated }: CreatePos
       toast({
         title: 'Post publicado!',
         description: 'Seu post foi publicado com sucesso',
-        className: 'bg-green-600 text-white'
+        variant: 'success'
       });
 
       // Resetar formulário
