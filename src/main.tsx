@@ -3,11 +3,21 @@ import App from "./App.tsx";
 import "./index.css";
 
 // ============================================
-// PWA: REGISTRAR SERVICE WORKER
+// PWA: ATUALIZAÇÕES AUTOMÁTICAS
 // ============================================
-// O Service Worker é registrado automaticamente pelo VitePWA
-// Este código serve apenas como fallback se necessário
-// Removido para evitar conflitos com o VitePWA plugin
+// O componente UpdatePrompt cuida das atualizações
+// Este código apenas garante que atualizações sejam aplicadas quando disponíveis
+if ('serviceWorker' in navigator) {
+  let refreshing = false;
+
+  // Detectar mudanças no service worker e recarregar automaticamente
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing) return;
+    refreshing = true;
+    console.log('🔄 Service Worker atualizado! Recarregando aplicação...');
+    window.location.reload();
+  });
+}
 
 // ============================================
 // PWA: DETECTAR QUANDO APP FOI INSTALADO

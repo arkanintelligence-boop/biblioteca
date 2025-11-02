@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { SupportButton } from "@/components/SupportButton";
 import { InstallPWA } from "@/components/InstallPWA";
+import { UpdatePrompt } from "@/components/UpdatePrompt";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Module from "./pages/Module";
@@ -40,6 +41,7 @@ const App = () => (
           </Routes>
           <SupportButton />
           <InstallPWA />
+          <UpdatePrompt />
         </BrowserRouter>
       </TooltipProvider>
     </AuthProvider>
