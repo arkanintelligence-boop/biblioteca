@@ -5,19 +5,9 @@ import "./index.css";
 // ============================================
 // PWA: REGISTRAR SERVICE WORKER
 // ============================================
-
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker
-      .register('/sw.js')
-      .then((registration) => {
-        console.log('✅ PWA Service Worker registrado:', registration);
-      })
-      .catch((error) => {
-        console.error('❌ Erro ao registrar Service Worker:', error);
-      });
-  });
-}
+// O Service Worker é registrado automaticamente pelo VitePWA
+// Este código serve apenas como fallback se necessário
+// Removido para evitar conflitos com o VitePWA plugin
 
 // ============================================
 // PWA: DETECTAR QUANDO APP FOI INSTALADO
