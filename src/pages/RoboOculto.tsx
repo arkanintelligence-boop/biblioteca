@@ -282,9 +282,11 @@ const RoboOculto = () => {
                 </div>
 
                 {mensagem.role === 'user' && (
-                  <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center flex-shrink-0">
-                    <User className="w-4 h-4 text-gray-300" />
-                  </div>
+                  <img
+                    src={user?.foto_perfil_url || 'https://via.placeholder.com/32'}
+                    alt="Você"
+                    className="w-8 h-8 rounded-full flex-shrink-0 object-cover"
+                  />
                 )}
               </div>
             ))}
@@ -338,7 +340,7 @@ const RoboOculto = () => {
               </Button>
             </div>
             <p className="text-xs text-gray-500 mt-2 text-center">
-              Conectado ao Robô Oculto via N8N
+              Conectado ao Robô Oculto
             </p>
           </div>
         </div>
