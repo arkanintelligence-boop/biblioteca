@@ -14,21 +14,87 @@ interface Mensagem {
   timestamp: Date;
 }
 
+const HISTORICO_KEY = 'robo_oculto_historico';
+const HISTORICO_DURACAO_HORAS = 48;
+
+interface HistoricoSalvo {
+  mensagens: Mensagem[];
+  timestamp: number; // timestamp de quando foi criado
+}
+
 const RoboOculto = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [mensagens, setMensagens] = useState<Mensagem[]>([
-    {
-      id: '1',
-      role: 'assistant',
-      content: 'Olá! Sou o Robô Oculto, seu assistente místico. Como posso ajudá-lo hoje com conhecimento esotérico, astrologia, cabala ou outras práticas sagradas?',
-      timestamp: new Date(),
-    },
-  ]);
+  
+  // Carregar histórico salvo ou usar mensagem inicial
+  const carregarHistorico = (): Mensagem[] => {
+    try {
+      const historicoSalvo = localStorage.getItem(HISTORICO_KEY);
+      if (!historicoSalvo) {
+        return [
+          {
+            id: '1',
+            role: 'assistant',
+            content: 'Olá! Sou o Robô Oculto, seu assistente místico. Como posso ajudá-lo hoje com conhecimento esotérico, astrologia, cabala ou outras práticas sagradas?',
+            timestamp: new Date(),
+          },
+        ];
+      }
+
+      const historico: HistoricoSalvo = JSON.parse(historicoSalvo);
+      const agora = Date.now();
+      const tempoDecorrido = agora - historico.timestamp;
+      const horasDecorridas = tempoDecorrido / (1000 * 60 * 60);
+
+      // Se passou mais de 48 horas, limpar e retornar mensagem inicial
+      if (horasDecorridas >= HISTORICO_DURACAO_HORAS) {
+        localStorage.removeItem(HISTORICO_KEY);
+        return [
+          {
+            id: '1',
+            role: 'assistant',
+            content: 'Olá! Sou o Robô Oculto, seu assistente místico. Como posso ajudá-lo hoje com conhecimento esotérico, astrologia, cabala ou outras práticas sagradas?',
+            timestamp: new Date(),
+          },
+        ];
+      }
+
+      // Converter timestamps string de volta para Date
+      return historico.mensagens.map((msg) => ({
+        ...msg,
+        timestamp: new Date(msg.timestamp),
+      }));
+    } catch (error) {
+      console.error('Erro ao carregar histórico:', error);
+      return [
+        {
+          id: '1',
+          role: 'assistant',
+          content: 'Olá! Sou o Robô Oculto, seu assistente místico. Como posso ajudá-lo hoje com conhecimento esotérico, astrologia, cabala ou outras práticas sagradas?',
+          timestamp: new Date(),
+        },
+      ];
+    }
+  };
+
+  const [mensagens, setMensagens] = useState<Mensagem[]>(carregarHistorico);
   const [inputMensagem, setInputMensagem] = useState('');
   const [enviando, setEnviando] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Salvar histórico no localStorage
+  const salvarHistorico = (msgs: Mensagem[]) => {
+    try {
+      const historico: HistoricoSalvo = {
+        mensagens: msgs,
+        timestamp: Date.now(),
+      };
+      localStorage.setItem(HISTORICO_KEY, JSON.stringify(historico));
+    } catch (error) {
+      console.error('Erro ao salvar histórico:', error);
+    }
+  };
 
   useEffect(() => {
     if (!user) {
@@ -38,6 +104,11 @@ const RoboOculto = () => {
 
   useEffect(() => {
     scrollToBottom();
+  }, [mensagens]);
+
+  // Salvar histórico sempre que mensagens mudarem
+  useEffect(() => {
+    salvarHistorico(mensagens);
   }, [mensagens]);
 
   const scrollToBottom = () => {
@@ -55,20 +126,88 @@ const RoboOculto = () => {
     };
 
     setMensagens((prev) => [...prev, novaMensagem]);
+    const mensagemEnviada = inputMensagem;
     setInputMensagem('');
     setEnviando(true);
 
-    // Simular resposta da IA (substituir pela integração com N8N depois)
-    setTimeout(() => {
+    try {
+      // Integração com N8N webhook (produção)
+      const response = await fetch('https://n8n.produtohub.store/webhook/agenteia-biblioteca', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          mensagem: mensagemEnviada,
+          usuario: user?.nome_exibicao || user?.email || 'Usuário',
+          timestamp: new Date().toISOString(),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erro ao comunicar com o agente: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Extrair resposta do N8N - prioriza o campo "output"
+      let respostaTexto = '';
+      
+      if (data.output) {
+        respostaTexto = typeof data.output === 'string' ? data.output : String(data.output);
+      } else if (typeof data === 'string') {
+        respostaTexto = data;
+      } else if (data.response) {
+        respostaTexto = typeof data.response === 'string' ? data.response : String(data.response);
+      } else if (data.text) {
+        respostaTexto = typeof data.text === 'string' ? data.text : String(data.text);
+      } else if (data.message) {
+        respostaTexto = typeof data.message === 'string' ? data.message : String(data.message);
+      } else if (data.answer) {
+        respostaTexto = typeof data.answer === 'string' ? data.answer : String(data.answer);
+      } else if (data.data) {
+        respostaTexto = typeof data.data === 'string' ? data.data : String(data.data);
+      } else if (Array.isArray(data) && data.length > 0) {
+        respostaTexto = typeof data[0] === 'string' ? data[0] : String(data[0]);
+      } else {
+        respostaTexto = JSON.stringify(data);
+      }
+      
+      // Limpar markdown e caracteres de escape
+      respostaTexto = respostaTexto
+        .replace(/\\n/g, '\n') // Converter \n para quebra de linha real
+        .replace(/\\"/g, '"') // Converter \" para "
+        .replace(/\*\*(.*?)\*\*/g, '$1') // Remover **bold**
+        .replace(/\*(.*?)\*/g, '$1') // Remover *italic*
+        .replace(/_(.*?)_/g, '$1') // Remover _underline_
+        .replace(/`(.*?)`/g, '$1') // Remover `code`
+        .replace(/```[\s\S]*?```/g, '') // Remover blocos de código
+        .replace(/#{1,6}\s/g, '') // Remover headers markdown
+        .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Remover links markdown [text](url)
+        .trim();
+      
       const resposta: Mensagem = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: 'Esta é uma resposta de exemplo. A integração com N8N será implementada em breve para respostas reais do assistente de IA.',
+        content: respostaTexto,
         timestamp: new Date(),
       };
+      
       setMensagens((prev) => [...prev, resposta]);
+    } catch (error) {
+      console.error('Erro ao comunicar com o agente de IA:', error);
+      
+      const resposta: Mensagem = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: 'Desculpe, ocorreu um erro ao processar sua mensagem. Por favor, tente novamente em alguns instantes.',
+        timestamp: new Date(),
+      };
+      
+      setMensagens((prev) => [...prev, resposta]);
+    } finally {
       setEnviando(false);
-    }, 1500);
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -199,7 +338,7 @@ const RoboOculto = () => {
               </Button>
             </div>
             <p className="text-xs text-gray-500 mt-2 text-center">
-              Este é um chat visual. A integração com N8N será implementada em breve.
+              Conectado ao Robô Oculto via N8N
             </p>
           </div>
         </div>
