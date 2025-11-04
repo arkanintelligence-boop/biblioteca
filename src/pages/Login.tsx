@@ -213,7 +213,7 @@ const Login = () => {
 
           {isCreatingAccount && (
             <p className="text-xs text-center text-yellow-500/80 mt-4 px-4">
-              ⚠️ Esta é uma funcionalidade provisória. Use apenas para testes.
+              ⚠️ Opção de criação de conta provisoriamente. Aproveite a Oportunidade de ser beta-tester
             </p>
           )}
 
