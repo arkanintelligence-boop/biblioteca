@@ -43,6 +43,7 @@ const Comunidade = () => {
   const [novoComentario, setNovoComentario] = useState<Record<string, string>>({});
   const [expandedPosts, setExpandedPosts] = useState<Record<string, boolean>>({});
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
+  const [contadoresComentarios, setContadoresComentarios] = useState<Record<string, number>>({});
   const [dialogDeletar, setDialogDeletar] = useState<{ open: boolean; postId: string | null }>({
     open: false,
     postId: null,
@@ -53,7 +54,59 @@ const Comunidade = () => {
       navigate('/login');
       return;
     }
+    
     loadPosts();
+
+    // Configurar Realtime subscriptions
+    const postsChannel = supabase
+      .channel('posts_comunidade_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'posts_comunidade',
+        },
+        () => {
+          loadPosts();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'curtidas',
+        },
+        () => {
+          loadPosts();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'comentarios',
+        },
+        (payload) => {
+          const postId = payload.new?.post_id || payload.old?.post_id;
+          if (postId) {
+            loadComentarios(postId);
+            // Atualizar contador
+            loadContadorComentarios(postId).then(count => {
+              setContadoresComentarios(prev => ({ ...prev, [postId]: count }));
+            });
+            // Atualizar posts para refletir mudanças
+            loadPosts();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(postsChannel);
+    };
   }, [user, navigate]);
 
   const loadPosts = async () => {
@@ -75,6 +128,30 @@ const Comunidade = () => {
       });
     } else {
       setPosts(data as PostComAutor[]);
+      
+      // Carregar contadores de comentários para todos os posts
+      if (data && data.length > 0) {
+        const postIds = data.map(p => p.id);
+        const { data: comentariosData } = await supabase
+          .from('comentarios')
+          .select('post_id')
+          .in('post_id', postIds);
+        
+        if (comentariosData) {
+          const contadores: Record<string, number> = {};
+          comentariosData.forEach(c => {
+            contadores[c.post_id] = (contadores[c.post_id] || 0) + 1;
+          });
+          
+          // Carregar comentários completos para posts que já foram abertos
+          Object.keys(contadores).forEach(postId => {
+            setContadoresComentarios(prev => ({ ...prev, [postId]: contadores[postId] }));
+            if (comentariosVisiveis[postId]) {
+              loadComentarios(postId);
+            }
+          });
+        }
+      }
     }
     setLoading(false);
   };
@@ -110,46 +187,90 @@ const Comunidade = () => {
   const toggleCurtida = async (postId: string, jaCurtiu: boolean) => {
     if (!user) return;
 
-    // Sempre verificar no banco de dados o estado real antes de fazer qualquer ação
-    const { data: existingCurtida } = await supabase
-      .from('curtidas')
-      .select('id')
-      .eq('usuario_id', user.id)
-      .eq('post_id', postId)
-      .maybeSingle();
+    try {
+      // Atualização otimista - atualizar estado local imediatamente
+      setPosts(prev => prev.map(post => {
+        if (post.id === postId) {
+          const curtidasAtuais = post.curtidas || [];
+          const jaTemCurtida = curtidasAtuais.some((c: any) => c.usuario_id === user.id);
+          
+          if (jaTemCurtida && jaCurtiu) {
+            // Remover curtida
+            return {
+              ...post,
+              curtidas: curtidasAtuais.filter((c: any) => c.usuario_id !== user.id)
+            };
+          } else if (!jaTemCurtida && !jaCurtiu) {
+            // Adicionar curtida
+            return {
+              ...post,
+              curtidas: [...curtidasAtuais, { usuario_id: user.id }]
+            };
+          }
+        }
+        return post;
+      }));
 
-    const realmenteCurtiu = !!existingCurtida;
-
-    if (realmenteCurtiu) {
-      // Se existe, deletar
-      const { error } = await supabase
+      // Sempre verificar no banco de dados o estado real antes de fazer qualquer ação
+      const { data: existingCurtida } = await supabase
         .from('curtidas')
-        .delete()
+        .select('id')
         .eq('usuario_id', user.id)
-        .eq('post_id', postId);
-      
-      if (error && error.code !== 'PGRST116') {
-        console.error('Erro ao remover curtida:', error);
-      }
-    } else {
-      // Se não existe, inserir
-      const { error } = await supabase
-        .from('curtidas')
-        .insert({ usuario_id: user.id, post_id: postId });
+        .eq('post_id', postId)
+        .maybeSingle();
 
-      // Ignorar erro 409/23505 (duplicata) - pode acontecer em race conditions
-      // ou quando há curtidas órfãs no banco
-      if (error) {
-        // Se der erro de duplicata, significa que já existe no banco
-        // Recarregar posts para sincronizar o estado
-        if (error.code === '23505' || error.message?.includes('duplicate') || error.message?.includes('409')) {
-          // Silenciosamente recarregar - a curtida já existe
-        } else {
-          console.error('Erro ao adicionar curtida:', error);
+      const realmenteCurtiu = !!existingCurtida;
+
+      if (realmenteCurtiu) {
+        // Se existe, deletar
+        const { error } = await supabase
+          .from('curtidas')
+          .delete()
+          .eq('usuario_id', user.id)
+          .eq('post_id', postId);
+        
+        if (error && error.code !== 'PGRST116') {
+          console.error('Erro ao remover curtida:', error);
+          toast({
+            title: 'Erro ao remover curtida',
+            description: error.message,
+            variant: 'destructive'
+          });
+          // Reverter mudança otimista
+          loadPosts();
+        }
+      } else {
+        // Se não existe, inserir
+        const { error } = await supabase
+          .from('curtidas')
+          .insert({ usuario_id: user.id, post_id: postId });
+
+        // Ignorar erro 409/23505 (duplicata) - pode acontecer em race conditions
+        if (error) {
+          if (error.code === '23505' || error.message?.includes('duplicate') || error.message?.includes('409')) {
+            // Silenciosamente recarregar - a curtida já existe
+          } else {
+            console.error('Erro ao adicionar curtida:', error);
+            toast({
+              title: 'Erro ao curtir',
+              description: error.message,
+              variant: 'destructive'
+            });
+            // Reverter mudança otimista
+            loadPosts();
+          }
         }
       }
+    } catch (error: any) {
+      console.error('Erro ao toggle curtida:', error);
+      toast({
+        title: 'Erro ao curtir',
+        description: error.message || 'Erro desconhecido',
+        variant: 'destructive'
+      });
+      // Reverter mudança otimista
+      loadPosts();
     }
-    loadPosts();
   };
 
   const loadComentarios = async (postId: string) => {
@@ -167,6 +288,16 @@ const Comunidade = () => {
     }
   };
 
+  // Carregar contador de comentários para um post específico
+  const loadContadorComentarios = async (postId: string) => {
+    const { count } = await supabase
+      .from('comentarios')
+      .select('*', { count: 'exact', head: true })
+      .eq('post_id', postId);
+    
+    return count || 0;
+  };
+
   const toggleComentarios = (postId: string) => {
     const novoEstado = !comentariosVisiveis[postId];
     setComentariosVisiveis(prev => ({ ...prev, [postId]: novoEstado }));
@@ -179,24 +310,74 @@ const Comunidade = () => {
   const adicionarComentario = async (postId: string) => {
     if (!user || !novoComentario[postId]?.trim()) return;
 
-    const { error } = await supabase
+    const conteudoComentario = novoComentario[postId];
+    
+    // Limpar input imediatamente
+    setNovoComentario(prev => ({ ...prev, [postId]: '' }));
+    
+    // Atualização otimista - adicionar comentário localmente imediatamente
+    const novoComentarioLocal: ComentarioComAutor = {
+      id: `temp-${Date.now()}`,
+      usuario_id: user.id,
+      post_id: postId,
+      conteudo: conteudoComentario,
+      created_at: new Date().toISOString(),
+      usuario: {
+        nome_exibicao: user.nome_exibicao || null,
+        foto_perfil_url: user.foto_perfil_url || null
+      }
+    };
+    
+    setComentarios(prev => ({
+      ...prev,
+      [postId]: [...(prev[postId] || []), novoComentarioLocal]
+    }));
+    
+    // Atualizar contador imediatamente
+    setContadoresComentarios(prev => ({
+      ...prev,
+      [postId]: (prev[postId] || 0) + 1
+    }));
+
+    // Inserir no banco
+    const { data, error } = await supabase
       .from('comentarios')
       .insert({
         usuario_id: user.id,
         post_id: postId,
-        conteudo: novoComentario[postId]
-      });
+        conteudo: conteudoComentario
+      })
+      .select(`
+        *,
+        usuario:usuarios(nome_exibicao, foto_perfil_url)
+      `)
+      .single();
 
     if (error) {
+      // Reverter mudança otimista em caso de erro
+      setComentarios(prev => ({
+        ...prev,
+        [postId]: (prev[postId] || []).filter(c => c.id !== novoComentarioLocal.id)
+      }));
+      setContadoresComentarios(prev => ({
+        ...prev,
+        [postId]: Math.max(0, (prev[postId] || 1) - 1)
+      }));
+      setNovoComentario(prev => ({ ...prev, [postId]: conteudoComentario }));
+      
       toast({
         title: 'Erro ao comentar',
         description: error.message,
         variant: 'destructive'
       });
-    } else {
-      setNovoComentario(prev => ({ ...prev, [postId]: '' }));
-      loadComentarios(postId);
-      loadPosts();
+    } else if (data) {
+      // Substituir comentário temporário pelo real
+      setComentarios(prev => ({
+        ...prev,
+        [postId]: (prev[postId] || []).map(c => 
+          c.id === novoComentarioLocal.id ? data as ComentarioComAutor : c
+        )
+      }));
     }
   };
 
@@ -454,7 +635,7 @@ const Comunidade = () => {
                     className="flex items-center gap-2 hover:text-purple-400 transition-colors"
                   >
                     <MessageCircle className="w-5 h-5" />
-                    <span>{post.total_comentarios || 0}</span>
+                    <span>{contadoresComentarios[post.id] ?? (comentarios[post.id]?.length || 0)}</span>
                   </button>
                   {isAdmin && (
                     <button

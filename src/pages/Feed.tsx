@@ -37,6 +37,7 @@ const Feed = () => {
   const [comentarios, setComentarios] = useState<Record<string, ComentarioComAutor[]>>({});
   const [novoComentario, setNovoComentario] = useState<Record<string, string>>({});
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
+  const [contadoresComentarios, setContadoresComentarios] = useState<Record<string, number>>({});
   const [dialogDeletar, setDialogDeletar] = useState<{ open: boolean; postId: string | null }>({
     open: false,
     postId: null,
@@ -49,6 +50,85 @@ const Feed = () => {
     }
     
     loadPosts();
+    
+    // Carregar contadores de comentários para todos os posts
+    const carregarContadores = async () => {
+      if (posts.length > 0) {
+        const postIds = posts.map(p => p.id);
+        const { data } = await supabase
+          .from('comentarios_feed')
+          .select('post_id')
+          .in('post_id', postIds);
+        
+        if (data) {
+          const contadores: Record<string, number> = {};
+          data.forEach(c => {
+            contadores[c.post_id] = (contadores[c.post_id] || 0) + 1;
+          });
+          // Atualizar comentários com contadores
+          Object.keys(contadores).forEach(postId => {
+            if (!comentarios[postId]) {
+              setComentarios(prev => ({ ...prev, [postId]: [] }));
+            }
+          });
+        }
+      }
+    };
+    
+    if (posts.length > 0) {
+      carregarContadores();
+    }
+
+    // Configurar Realtime subscriptions
+    const postsChannel = supabase
+      .channel('posts_feed_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'posts_feed',
+        },
+        () => {
+          loadPosts();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'curtidas_feed',
+        },
+        () => {
+          loadPosts();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'comentarios_feed',
+        },
+        (payload) => {
+          const postId = payload.new?.post_id || payload.old?.post_id;
+          if (postId) {
+            loadComentarios(postId);
+            // Atualizar contador
+            loadContadorComentarios(postId).then(count => {
+              setContadoresComentarios(prev => ({ ...prev, [postId]: count }));
+            });
+            // Atualizar posts para refletir mudanças
+            loadPosts();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(postsChannel);
+    };
   }, [user, navigate]);
 
   const loadPosts = async () => {
@@ -70,6 +150,30 @@ const Feed = () => {
       });
     } else {
       setPosts(data as PostComAutor[]);
+      
+      // Carregar contadores de comentários para todos os posts
+      if (data && data.length > 0) {
+        const postIds = data.map(p => p.id);
+        const { data: comentariosData } = await supabase
+          .from('comentarios_feed')
+          .select('post_id')
+          .in('post_id', postIds);
+        
+        if (comentariosData) {
+          const contadores: Record<string, number> = {};
+          comentariosData.forEach(c => {
+            contadores[c.post_id] = (contadores[c.post_id] || 0) + 1;
+          });
+          
+          // Carregar comentários completos para posts que já foram abertos
+          Object.keys(contadores).forEach(postId => {
+            setContadoresComentarios(prev => ({ ...prev, [postId]: contadores[postId] }));
+            if (comentariosVisiveis[postId]) {
+              loadComentarios(postId);
+            }
+          });
+        }
+      }
     }
     setLoading(false);
   };
@@ -77,6 +181,30 @@ const Feed = () => {
   const toggleCurtida = async (postId: string, jaCurtiu: boolean) => {
     if (!user) return;
 
+    // Atualização otimista - atualizar estado local imediatamente
+    setPosts(prev => prev.map(post => {
+      if (post.id === postId) {
+        const curtidasAtuais = post.curtidas || [];
+        const jaTemCurtida = curtidasAtuais.some((c: any) => c.usuario_id === user.id);
+        
+        if (jaTemCurtida && jaCurtiu) {
+          // Remover curtida
+          return {
+            ...post,
+            curtidas: curtidasAtuais.filter((c: any) => c.usuario_id !== user.id)
+          };
+        } else if (!jaTemCurtida && !jaCurtiu) {
+          // Adicionar curtida
+          return {
+            ...post,
+            curtidas: [...curtidasAtuais, { usuario_id: user.id }]
+          };
+        }
+      }
+      return post;
+    }));
+
+    // Atualizar no banco
     if (jaCurtiu) {
       await supabase
         .from('curtidas_feed')
@@ -88,7 +216,8 @@ const Feed = () => {
         .from('curtidas_feed')
         .insert({ usuario_id: user.id, post_id: postId });
     }
-    loadPosts();
+    
+    // Realtime subscription vai garantir que está sincronizado
   };
 
   const loadComentarios = async (postId: string) => {
@@ -106,6 +235,16 @@ const Feed = () => {
     }
   };
 
+  // Carregar contador de comentários para um post específico
+  const loadContadorComentarios = async (postId: string) => {
+    const { count } = await supabase
+      .from('comentarios_feed')
+      .select('*', { count: 'exact', head: true })
+      .eq('post_id', postId);
+    
+    return count || 0;
+  };
+
   const toggleComentarios = (postId: string) => {
     const novoEstado = !comentariosVisiveis[postId];
     setComentariosVisiveis(prev => ({ ...prev, [postId]: novoEstado }));
@@ -118,24 +257,74 @@ const Feed = () => {
   const adicionarComentario = async (postId: string) => {
     if (!user || !novoComentario[postId]?.trim()) return;
 
-    const { error } = await supabase
+    const conteudoComentario = novoComentario[postId];
+    
+    // Limpar input imediatamente
+    setNovoComentario(prev => ({ ...prev, [postId]: '' }));
+    
+    // Atualização otimista - adicionar comentário localmente imediatamente
+    const novoComentarioLocal: ComentarioComAutor = {
+      id: `temp-${Date.now()}`,
+      usuario_id: user.id,
+      post_id: postId,
+      conteudo: conteudoComentario,
+      created_at: new Date().toISOString(),
+      usuario: {
+        nome_exibicao: user.nome_exibicao || null,
+        foto_perfil_url: user.foto_perfil_url || null
+      }
+    };
+    
+    setComentarios(prev => ({
+      ...prev,
+      [postId]: [...(prev[postId] || []), novoComentarioLocal]
+    }));
+    
+    // Atualizar contador imediatamente
+    setContadoresComentarios(prev => ({
+      ...prev,
+      [postId]: (prev[postId] || 0) + 1
+    }));
+
+    // Inserir no banco
+    const { data, error } = await supabase
       .from('comentarios_feed')
       .insert({
         usuario_id: user.id,
         post_id: postId,
-        conteudo: novoComentario[postId]
-      });
+        conteudo: conteudoComentario
+      })
+      .select(`
+        *,
+        usuario:usuarios(nome_exibicao, foto_perfil_url)
+      `)
+      .single();
 
     if (error) {
+      // Reverter mudança otimista em caso de erro
+      setComentarios(prev => ({
+        ...prev,
+        [postId]: (prev[postId] || []).filter(c => c.id !== novoComentarioLocal.id)
+      }));
+      setContadoresComentarios(prev => ({
+        ...prev,
+        [postId]: Math.max(0, (prev[postId] || 1) - 1)
+      }));
+      setNovoComentario(prev => ({ ...prev, [postId]: conteudoComentario }));
+      
       toast({
         title: 'Erro ao comentar',
         description: error.message,
         variant: 'destructive'
       });
-    } else {
-      setNovoComentario(prev => ({ ...prev, [postId]: '' }));
-      loadComentarios(postId);
-      loadPosts();
+    } else if (data) {
+      // Substituir comentário temporário pelo real
+      setComentarios(prev => ({
+        ...prev,
+        [postId]: (prev[postId] || []).map(c => 
+          c.id === novoComentarioLocal.id ? data as ComentarioComAutor : c
+        )
+      }));
     }
   };
 
@@ -326,7 +515,9 @@ const Feed = () => {
                           className="flex items-center gap-2 hover:text-purple-400 transition-colors"
                         >
                           <MessageCircle className="w-5 h-5" />
-                          <span>{comentarios[post.id]?.length || 0}</span>
+                          <span>
+                            {contadoresComentarios[post.id] ?? (comentarios[post.id]?.length || 0)}
+                          </span>
                         </button>
                         {isAdmin && (
                           <button

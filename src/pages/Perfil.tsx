@@ -8,13 +8,15 @@ import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Camera } from 'lucide-react';
+import { Loader2, Camera, Bell } from 'lucide-react';
 
 const IMGBB_API_KEY = '55f36cf170ead780461094f42b006c12';
 
 const Perfil = () => {
-  const { user } = useAuth();
+  const { user, setUser } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
@@ -29,6 +31,12 @@ const Perfil = () => {
   const [meusPosts, setMeusPosts] = useState<any[]>([]);
   const [uploadingFoto, setUploadingFoto] = useState(false);
   const [expandedPosts, setExpandedPosts] = useState<Record<string, boolean>>({});
+  const [preferenciasNotificacao, setPreferenciasNotificacao] = useState({
+    notificar_curtidas_comentarios: true,
+    notificar_posts_feed_oculto: true,
+    notificar_posts_legiao_oculta: true,
+  });
+  const [carregandoPrefs, setCarregandoPrefs] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -37,6 +45,39 @@ const Perfil = () => {
     }
     loadPerfil();
     loadMeusPosts();
+    loadPreferenciasNotificacao();
+
+    // Configurar Realtime subscription para atualização de foto de perfil
+    const perfilChannel = supabase
+      .channel('perfil_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'usuarios',
+          filter: `id=eq.${user.id}`,
+        },
+        async (payload) => {
+          // Atualizar perfil local
+          await loadPerfil();
+          // Atualizar AuthContext
+          if (payload.new) {
+            const updatedUser = {
+              ...user,
+              nome_exibicao: payload.new.nome_exibicao || user.nome_exibicao,
+              bio: payload.new.bio || user.bio,
+              foto_perfil_url: payload.new.foto_perfil_url || user.foto_perfil_url,
+            };
+            setUser(updatedUser);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(perfilChannel);
+    };
   }, [user, navigate]);
 
   const loadPerfil = async () => {
@@ -83,6 +124,104 @@ const Perfil = () => {
     }
   };
 
+  const loadPreferenciasNotificacao = async () => {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from('preferencias_notificacoes')
+      .select('*')
+      .eq('usuario_id', user.id)
+      .maybeSingle();
+
+    if (error && error.code !== 'PGRST116') {
+      console.error('Erro ao carregar preferências:', error);
+      // Criar preferências padrão se não existir
+      const { data: novaPref } = await supabase
+        .from('preferencias_notificacoes')
+        .insert({
+          usuario_id: user.id,
+          notificar_curtidas_comentarios: true,
+          notificar_posts_feed_oculto: true,
+          notificar_posts_legiao_oculta: true,
+        })
+        .select()
+        .single();
+
+      if (novaPref) {
+        setPreferenciasNotificacao({
+          notificar_curtidas_comentarios: novaPref.notificar_curtidas_comentarios ?? true,
+          notificar_posts_feed_oculto: novaPref.notificar_posts_feed_oculto ?? true,
+          notificar_posts_legiao_oculta: novaPref.notificar_posts_legiao_oculta ?? true,
+        });
+      }
+    } else if (data) {
+      setPreferenciasNotificacao({
+        notificar_curtidas_comentarios: data.notificar_curtidas_comentarios ?? true,
+        notificar_posts_feed_oculto: data.notificar_posts_feed_oculto ?? true,
+        notificar_posts_legiao_oculta: data.notificar_posts_legiao_oculta ?? true,
+      });
+    } else {
+      // Criar preferências padrão se não existir
+      const { data: novaPref } = await supabase
+        .from('preferencias_notificacoes')
+        .insert({
+          usuario_id: user.id,
+          notificar_curtidas_comentarios: true,
+          notificar_posts_feed_oculto: true,
+          notificar_posts_legiao_oculta: true,
+        })
+        .select()
+        .single();
+
+      if (novaPref) {
+        setPreferenciasNotificacao({
+          notificar_curtidas_comentarios: novaPref.notificar_curtidas_comentarios ?? true,
+          notificar_posts_feed_oculto: novaPref.notificar_posts_feed_oculto ?? true,
+          notificar_posts_legiao_oculta: novaPref.notificar_posts_legiao_oculta ?? true,
+        });
+      }
+    }
+  };
+
+  const atualizarPreferenciaNotificacao = async (
+    campo: 'notificar_curtidas_comentarios' | 'notificar_posts_feed_oculto' | 'notificar_posts_legiao_oculta',
+    valor: boolean
+  ) => {
+    if (!user || carregandoPrefs) return;
+
+    setCarregandoPrefs(true);
+    const novoValor = { [campo]: valor };
+    setPreferenciasNotificacao(prev => ({ ...prev, ...novoValor }));
+
+    const { error } = await supabase
+      .from('preferencias_notificacoes')
+      .upsert({
+        usuario_id: user.id,
+        ...preferenciasNotificacao,
+        ...novoValor,
+      }, {
+        onConflict: 'usuario_id'
+      });
+
+    if (error) {
+      console.error('Erro ao atualizar preferência:', error);
+      toast({
+        title: 'Erro ao atualizar',
+        description: error.message,
+        variant: 'destructive'
+      });
+      // Reverter mudança
+      setPreferenciasNotificacao(prev => ({ ...prev, [campo]: !valor }));
+    } else {
+      toast({
+        title: 'Preferência atualizada!',
+        description: 'Sua configuração foi salva com sucesso.',
+      });
+    }
+
+    setCarregandoPrefs(false);
+  };
+
   const salvarPerfil = async () => {
     if (!user) return;
 
@@ -105,6 +244,16 @@ const Perfil = () => {
       toast({ title: 'Perfil atualizado!' });
       setPerfil(perfilTemp);
       setEditando(false);
+      
+      // Atualizar AuthContext para que todos os componentes vejam a mudança instantaneamente
+      if (user) {
+        setUser({
+          ...user,
+          nome_exibicao: perfilTemp.nome_exibicao,
+          bio: perfilTemp.bio,
+          foto_perfil_url: perfilTemp.foto_perfil_url
+        });
+      }
     }
   };
 
@@ -169,6 +318,14 @@ const Perfil = () => {
         // Atualizar estado local
         setPerfil({ ...perfil, foto_perfil_url: imageUrl });
         setPerfilTemp({ ...perfilTemp, foto_perfil_url: imageUrl });
+        
+        // Atualizar AuthContext para que todos os componentes vejam a mudança instantaneamente
+        if (user) {
+          setUser({
+            ...user,
+            foto_perfil_url: imageUrl
+          });
+        }
       }
     } catch (error) {
       console.error('Erro upload:', error);
@@ -297,6 +454,73 @@ const Perfil = () => {
               </div>
             </div>
           )}
+        </div>
+
+        {/* Seção de Configurações de Notificação */}
+        <div className="mt-8 bg-card rounded-lg p-6 border border-border">
+          <div className="flex items-center gap-2 mb-6">
+            <Bell className="w-5 h-5 text-purple-500" />
+            <h3 className="text-xl font-bold text-foreground">Configurações de Notificação</h3>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
+              <div className="flex-1">
+                <Label htmlFor="notif-curtidas" className="text-base font-semibold text-foreground cursor-pointer">
+                  Notificação curtidas/comentários no seu post
+                </Label>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Receba notificações quando alguém curtir ou comentar em suas publicações
+                </p>
+              </div>
+              <Switch
+                id="notif-curtidas"
+                checked={preferenciasNotificacao.notificar_curtidas_comentarios}
+                onCheckedChange={(checked) =>
+                  atualizarPreferenciaNotificacao('notificar_curtidas_comentarios', checked)
+                }
+                disabled={carregandoPrefs}
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
+              <div className="flex-1">
+                <Label htmlFor="notif-feed" className="text-base font-semibold text-foreground cursor-pointer">
+                  Notificação Posts novos Feed Oculto
+                </Label>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Receba notificações quando novos posts forem publicados no Feed Oculto
+                </p>
+              </div>
+              <Switch
+                id="notif-feed"
+                checked={preferenciasNotificacao.notificar_posts_feed_oculto}
+                onCheckedChange={(checked) =>
+                  atualizarPreferenciaNotificacao('notificar_posts_feed_oculto', checked)
+                }
+                disabled={carregandoPrefs}
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
+              <div className="flex-1">
+                <Label htmlFor="notif-legiao" className="text-base font-semibold text-foreground cursor-pointer">
+                  Notificação Posts novos Legião Oculta
+                </Label>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Receba notificações quando novos posts forem publicados na Legião Oculta
+                </p>
+              </div>
+              <Switch
+                id="notif-legiao"
+                checked={preferenciasNotificacao.notificar_posts_legiao_oculta}
+                onCheckedChange={(checked) =>
+                  atualizarPreferenciaNotificacao('notificar_posts_legiao_oculta', checked)
+                }
+                disabled={carregandoPrefs}
+              />
+            </div>
+          </div>
         </div>
 
         {/* Seção de Posts do Usuário */}
